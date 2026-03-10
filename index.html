@@ -1190,216 +1190,266 @@ function showHoldemShowdown(evals, winners) {
 // ==========================================
 // ============= BLACKJACK ==================
 // ==========================================
+
+// bjTurnIndex: index into G.bjTurnOrder (bots first, human last)
+// G.bjTurnOrder: array of players who need to act this round
+
 function startBlackjack() {
-  G.bjPhase = 'betting'; // betting, player_turns, dealer, result
-  G.deck = newDeck();
+  G.bjPhase = 'betting';
   G.bjDealer = {name:'Dealer', hand:[], isDealer:true, emoji:'🏦'};
-  G.bjPlayers = [...G.allPlayers]; // includes human
-  G.bjPlayers.forEach(p=>{ p.hand=[]; p.bjBet=0; p.bjStatus=''; p.bust=p.balance<=0; });
-  G.bjCurrentPlayerIdx = 0;
-  G.round++;
-  document.getElementById('round-num').textContent = G.round;
+  // Build player list, mark already-bust players
+  G.bjPlayers = G.allPlayers.map(p=> {
+    p.bjBust = p.balance <= 0;
+    p.hand = [];
+    p.bjBet = 0;
+    p.bjStatus = '';
+    p.bjResult = '';
+    return p;
+  });
   document.getElementById('phase-chip').textContent = 'Blackjack';
   renderBJ();
 }
 
 function bjPlaceBet(amount) {
   const p = G.player;
-  if (p.balance <= 0) return;
-  amount = Math.min(amount, p.balance);
+  if (p.balance <= 0) { endGame(); return; }
+  amount = Math.max(1, Math.min(parseInt(amount)||10, p.balance));
   G.bjPlayerBet = amount;
   bjStartRound();
 }
 
 function bjStartRound() {
+  G.round++;
+  document.getElementById('round-num').textContent = G.round;
   G.deck = newDeck();
   G.bjDealer.hand = [];
-  G.bjPlayers.forEach(p=>{ p.hand=[]; p.bjStatus=''; });
 
-  // Determine bets for bots (random 10-30% of balance)
-  G.bjPlayers.forEach(p=>{
-    if (!p.isHuman && !p.bust) {
-      p.bjBet = Math.max(10, Math.floor(p.balance * (0.1 + Math.random()*0.2)));
+  // Reset each player for the new round
+  G.bjPlayers.forEach(p => {
+    p.bjBust = p.balance <= 0;
+    p.hand = [];
+    p.bjStatus = '';
+    p.bjResult = '';
+    p.bjBet = 0;
+  });
+
+  // Assign bets
+  G.bjPlayers.forEach(p => {
+    if (p.bjBust) return;
+    if (p.isHuman) {
+      p.bjBet = G.bjPlayerBet || 10;
+    } else {
+      p.bjBet = Math.max(10, Math.floor(p.balance * (0.1 + Math.random() * 0.2)));
       p.bjBet = Math.min(p.bjBet, p.balance);
-    } else if (p.isHuman) {
-      p.bjBet = G.bjPlayerBet || 0;
     }
   });
 
-  // Deal: player, dealer, player, dealer (plus bots)
-  G.bjPlayers.forEach(p=>{ if(!p.bust) p.hand.push(G.deck.pop()); });
+  // Deal 2 cards to each active player, then 2 to dealer
+  const active = G.bjPlayers.filter(p => !p.bjBust);
+  active.forEach(p => p.hand.push(G.deck.pop()));
   G.bjDealer.hand.push(G.deck.pop());
-  G.bjPlayers.forEach(p=>{ if(!p.bust) p.hand.push(G.deck.pop()); });
+  active.forEach(p => p.hand.push(G.deck.pop()));
   G.bjDealer.hand.push(G.deck.pop());
 
   log(`--- Blackjack Round ${G.round} ---`, 'log-info');
-  G.bjCurrentPlayerIdx = 0;
+
+  // Turn order: bots first, human last
+  G.bjTurnOrder = [
+    ...G.bjPlayers.filter(p => !p.isHuman && !p.bjBust),
+    ...G.bjPlayers.filter(p => p.isHuman && !p.bjBust)
+  ];
+  G.bjTurnIndex = 0;
   G.bjPhase = 'player_turns';
+
   renderBJ();
-  bjNextPlayer();
+  bjAdvanceTurn();
 }
 
-function bjNextPlayer() {
-  const activePlayers = G.bjPlayers.filter(p=>!p.bust && p.bjStatus==='');
-  if (activePlayers.length===0) { bjDealerTurn(); return; }
+function bjAdvanceTurn() {
+  // Skip players who have already acted
+  while (G.bjTurnIndex < G.bjTurnOrder.length) {
+    const cur = G.bjTurnOrder[G.bjTurnIndex];
+    if (cur.bjStatus !== '') {
+      G.bjTurnIndex++;
+      continue;
+    }
+    break;
+  }
 
-  const cur = activePlayers[0];
+  if (G.bjTurnIndex >= G.bjTurnOrder.length) {
+    // All players done — dealer's turn
+    bjDealerTurn();
+    return;
+  }
 
-  if (!cur.isHuman) {
-    // Bot AI: hit if <17, stand if >=17 (with some randomness)
-    setTimeout(()=>{
-      bjBotTurn(cur);
-    }, 700+Math.random()*500);
+  const cur = G.bjTurnOrder[G.bjTurnIndex];
+
+  if (cur.isHuman) {
+    // Show human action buttons
+    renderBJ(true);
   } else {
-    renderBJ(cur);
+    renderBJ(false);
+    setTimeout(() => bjBotTurn(cur), 700 + Math.random() * 400);
   }
 }
 
 function bjBotTurn(p) {
+  // Check p is still the current bot (safety)
+  if (G.bjTurnOrder[G.bjTurnIndex] !== p) return;
   const val = bjValue(p.hand);
-  let action;
-  if (val < 17 || (val===17 && Math.random()<0.3)) {
+  if (val < 17 || (val === 17 && Math.random() < 0.25)) {
     p.hand.push(G.deck.pop());
     const newVal = bjValue(p.hand);
     log(`${p.name} hits → ${newVal}`, 'log-action');
     if (newVal > 21) {
-      p.bjStatus = 'bust'; log(`${p.name} busts!`, 'log-lose');
-      renderBJ();
-      setTimeout(()=>bjNextPlayer(), 400);
+      p.bjStatus = 'bust';
+      log(`${p.name} busts!`, 'log-lose');
+      renderBJ(false);
+      G.bjTurnIndex++;
+      setTimeout(() => bjAdvanceTurn(), 500);
     } else {
-      renderBJ();
-      setTimeout(()=>bjBotTurn(p), 500);
+      renderBJ(false);
+      setTimeout(() => bjBotTurn(p), 550);
     }
   } else {
     p.bjStatus = 'stand';
     log(`${p.name} stands at ${val}`, 'log-action');
-    renderBJ();
-    setTimeout(()=>bjNextPlayer(), 400);
+    renderBJ(false);
+    G.bjTurnIndex++;
+    setTimeout(() => bjAdvanceTurn(), 500);
   }
 }
 
 function bjPlayerAction(action) {
+  if (G.bjPhase !== 'player_turns') return;
   const p = G.player;
-  if (action==='hit') {
+  if (p.bjStatus !== '') return; // already acted
+
+  if (action === 'hit') {
     p.hand.push(G.deck.pop());
     const val = bjValue(p.hand);
     log(`You hit → ${val}`, 'log-action');
     if (val > 21) {
-      p.bjStatus = 'bust'; log('You bust!', 'log-lose');
-      renderBJ();
-      setTimeout(()=>bjNextPlayer(), 600);
-    } else if (val===21) {
+      p.bjStatus = 'bust';
+      log('You bust!', 'log-lose');
+      G.bjTurnIndex++;
+      renderBJ(false);
+      setTimeout(() => bjAdvanceTurn(), 700);
+    } else if (val === 21) {
       p.bjStatus = 'stand';
-      renderBJ();
-      setTimeout(()=>bjNextPlayer(), 600);
+      G.bjTurnIndex++;
+      renderBJ(false);
+      setTimeout(() => bjAdvanceTurn(), 700);
     } else {
-      renderBJ(p);
+      renderBJ(true); // still human's turn, show buttons again
     }
-  } else if (action==='stand') {
+  } else if (action === 'stand') {
     p.bjStatus = 'stand';
     log(`You stand at ${bjValue(p.hand)}`, 'log-action');
-    renderBJ();
-    setTimeout(()=>bjNextPlayer(), 400);
-  } else if (action==='double') {
-    const extra = Math.min(p.bjBet, p.balance - p.bjBet);
+    G.bjTurnIndex++;
+    renderBJ(false);
+    setTimeout(() => bjAdvanceTurn(), 500);
+  } else if (action === 'double') {
+    const extra = Math.min(p.bjBet, p.balance);
     p.bjBet += extra;
     p.hand.push(G.deck.pop());
     const val = bjValue(p.hand);
-    log(`You double down → ${val}`, 'log-action');
-    p.bjStatus = val>21 ? 'bust' : 'stand';
-    if (val>21) log('You bust!', 'log-lose');
-    renderBJ();
-    setTimeout(()=>bjNextPlayer(), 600);
+    log(`You double down → ${val} (total bet: $${p.bjBet})`, 'log-action');
+    p.bjStatus = val > 21 ? 'bust' : 'stand';
+    if (val > 21) log('You bust!', 'log-lose');
+    G.bjTurnIndex++;
+    renderBJ(false);
+    setTimeout(() => bjAdvanceTurn(), 700);
   }
 }
 
 function bjDealerTurn() {
   G.bjPhase = 'dealer';
-  log('--- Dealer\'s turn ---', 'log-info');
-  const anyAlive = G.bjPlayers.filter(p=>!p.bust && p.bjStatus!=='bust').length > 0;
+  log("--- Dealer's turn ---", 'log-info');
+  renderBJ(false);
 
-  function dealerHit() {
+  // Check if anyone (not bust) is still in
+  const anyStanding = G.bjPlayers.some(p => !p.bjBust && p.bjStatus === 'stand');
+
+  function dealerStep() {
     const val = bjValue(G.bjDealer.hand);
-    if (val < 17 && anyAlive) {
+    if (val < 17 && anyStanding) {
       G.bjDealer.hand.push(G.deck.pop());
-      log(`Dealer hits → ${bjValue(G.bjDealer.hand)}`, 'log-action');
-      renderBJ();
-      setTimeout(dealerHit, 700);
+      const newVal = bjValue(G.bjDealer.hand);
+      log(`Dealer hits → ${newVal}`, 'log-action');
+      renderBJ(false);
+      setTimeout(dealerStep, 750);
     } else {
       bjResolve();
     }
   }
-  renderBJ();
-  setTimeout(dealerHit, 800);
+  setTimeout(dealerStep, 900);
 }
 
 function bjResolve() {
   G.bjPhase = 'result';
   const dVal = bjValue(G.bjDealer.hand);
   const dBust = dVal > 21;
-  log(`Dealer has ${dVal}${dBust?' (bust)':''}`, 'log-info');
+  const dBJ = bjIsBlackjack(G.bjDealer.hand);
+  log(`Dealer: ${dVal}${dBust ? ' (BUST)' : ''}`, 'log-info');
 
-  G.bjPlayers.forEach(p=>{
-    if (p.bust || !p.bjBet) return;
+  G.bjPlayers.forEach(p => {
+    if (p.bjBust || !p.bjBet) return;
     const pVal = bjValue(p.hand);
     const pBJ = bjIsBlackjack(p.hand);
-    const dBJ = bjIsBlackjack(G.bjDealer.hand);
+    const playerBust = p.bjStatus === 'bust';
 
-    if (p.bjStatus==='bust') {
-      p.balance -= p.bjBet; // already removed? no, we remove now
-      // Actually: balance was not yet deducted — deduct now
-      // We deduct bet at resolution
+    if (playerBust) {
+      // Lose the bet
+      p.balance = Math.max(0, p.balance - p.bjBet);
       p.bjResult = 'lose';
-      p.bjStatus = 'bust';
-      log(`${p.name} busts. Loses $${p.bjBet}.`, 'log-lose');
+      log(`${p.name} busted. -$${p.bjBet}`, 'log-lose');
     } else if (pBJ && dBJ) {
+      // Both blackjack — push (no money change)
       p.bjResult = 'push';
       log(`${p.name} push (both blackjack).`, 'log-action');
     } else if (pBJ) {
+      // Blackjack pays 3:2
       const win = Math.floor(p.bjBet * 1.5);
       p.balance += win;
       p.bjResult = 'blackjack';
-      log(`${p.name} BLACKJACK! Wins $${win}.`, 'log-win');
+      log(`${p.name} BLACKJACK! +$${win}`, 'log-win');
     } else if (dBust || pVal > dVal) {
       p.balance += p.bjBet;
       p.bjResult = 'win';
-      log(`${p.name} wins $${p.bjBet}!`, 'log-win');
+      log(`${p.name} wins! +$${p.bjBet}`, 'log-win');
     } else if (pVal === dVal) {
+      // Push — no change
       p.bjResult = 'push';
       log(`${p.name} push.`, 'log-action');
     } else {
-      p.balance -= p.bjBet;
+      // Dealer wins
+      p.balance = Math.max(0, p.balance - p.bjBet);
       p.bjResult = 'lose';
-      log(`${p.name} loses $${p.bjBet}.`, 'log-lose');
+      log(`${p.name} loses. -$${p.bjBet}`, 'log-lose');
     }
-
-    if (p.balance < 0) p.balance = 0;
   });
 
-  // Mark busted players
-  G.bjPlayers.forEach(p=>{ if(p.balance<=0) p.bust=true; });
-
-  renderBJ();
-  setTimeout(()=>showBJResult(), 800);
+  renderBJ(false);
+  setTimeout(() => showBJResult(), 900);
 }
 
 function showBJResult() {
-  const alive = G.bjPlayers.filter(p=>!p.bust || p.balance>0);
-  if (G.player.balance<=0) { endGame(); return; }
+  if (G.player.balance <= 0) { endGame(); return; }
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay';
   const dVal = bjValue(G.bjDealer.hand);
 
-  const rows = G.bjPlayers.filter(p=>!p.bust||p.bjResult).map(p=>{
-    const pVal = bjValue(p.hand);
-    const res = p.bjResult;
-    const cls = res==='win'||res==='blackjack'?'winner-tag':res==='push'?'status-push':'loser-tag';
-    const label = res==='blackjack'?'BLACKJACK 🏆':res==='win'?'WIN 🏆':res==='push'?'PUSH':res==='lose'?'LOSE':'BUST';
+  const rows = G.bjPlayers.map(p => {
+    const pVal = p.hand.length > 0 ? bjValue(p.hand) : 0;
+    const res = p.bjResult || (p.bjBust ? 'out' : '');
+    const cls = res === 'win' || res === 'blackjack' ? 'winner-tag' : res === 'push' ? 'status-push' : 'loser-tag';
+    const label = res === 'blackjack' ? 'BLACKJACK 🏆' : res === 'win' ? 'WIN 🏆' : res === 'push' ? 'PUSH' : res === 'lose' ? 'LOSE' : res === 'out' ? 'OUT' : 'BUST';
     return `<div class="modal-hand-row">
-      <div class="mhr-name">${p.name}</div>
-      <div class="mhr-cards">${p.hand.map(c=>cardHTML(c,true)).join('')}</div>
-      <div class="mhr-result ${cls}">${pVal} — ${label}</div>
+      <div class="mhr-name">${p.emoji} ${p.name}</div>
+      <div class="mhr-cards">${p.hand.map(c => cardHTML(c, true)).join('')}</div>
+      <div class="mhr-result ${cls}">${pVal > 0 ? pVal + ' — ' : ''}${label}</div>
     </div>`;
   }).join('');
 
@@ -1407,9 +1457,9 @@ function showBJResult() {
     <div class="modal-title">Round Over</div>
     <div class="modal-hands">
       <div class="modal-hand-row" style="margin-bottom:8px">
-        <div class="mhr-name" style="color:#3498db">Dealer</div>
-        <div class="mhr-cards">${G.bjDealer.hand.map(c=>cardHTML(c,true)).join('')}</div>
-        <div class="mhr-result">${dVal}${dVal>21?' (BUST)':''}</div>
+        <div class="mhr-name" style="color:#3498db">🏦 Dealer</div>
+        <div class="mhr-cards">${G.bjDealer.hand.map(c => cardHTML(c, true)).join('')}</div>
+        <div class="mhr-result">${dVal}${dVal > 21 ? ' (BUST)' : ''}</div>
       </div>
       ${rows}
     </div>
@@ -1420,88 +1470,117 @@ function showBJResult() {
 }
 
 function showBJBetting() {
-  if (G.player.balance<=0) { endGame(); return; }
-  const alive = G.allPlayers.filter(p=>p.balance>0).length;
-  if (alive < 2) { endGame(); return; }
+  if (G.player.balance <= 0) { endGame(); return; }
+  // Reset all for new hand
+  G.bjPlayers.forEach(p => {
+    p.bjBust = p.balance <= 0;
+    p.hand = [];
+    p.bjBet = 0;
+    p.bjStatus = '';
+    p.bjResult = '';
+  });
   G.bjPhase = 'betting';
   renderBJ();
 }
 
-function renderBJ(activeHuman=null) {
+function renderBJ(humanCanAct) {
   const areaEl = document.getElementById('table-area');
+  if (!areaEl || !G.bjDealer) return;
   const p = G.player;
 
-  // Dealer area
+  // Dealer cards — hide second card during player turns
   const dealerVal = bjValue(G.bjDealer.hand);
+  const hideHole = G.bjPhase === 'player_turns';
   const dealerCards = G.bjDealer.hand.length > 0
-    ? (G.bjPhase==='player_turns'
-        ? cardHTML(G.bjDealer.hand[0])+cardBackHTML()
-        : G.bjDealer.hand.map(c=>cardHTML(c)).join(''))
-    : '<div style="color:rgba(240,232,208,0.2);font-style:italic;font-size:14px;">No cards yet</div>';
+    ? (hideHole
+        ? cardHTML(G.bjDealer.hand[0]) + cardBackHTML()
+        : G.bjDealer.hand.map(c => cardHTML(c)).join(''))
+    : '<div style="color:rgba(240,232,208,0.2);font-style:italic;font-size:14px;">Waiting...</div>';
+  const dealerScoreCls = dealerVal > 21 ? 'score-bust' : dealerVal === 21 ? 'score-21' : 'score-ok';
+  const dealerScoreDisplay = hideHole ? '?' : dealerVal;
 
-  const dealerShow = G.bjPhase==='player_turns' ? '?' : dealerVal;
-  const dealerScoreCls = dealerVal>21?'score-bust':dealerVal===21?'score-21':'score-ok';
+  // Player boxes
+  const playersHTML = G.bjPlayers.map(pp => {
+    const val = pp.hand.length > 0 ? bjValue(pp.hand) : 0;
+    const scoreCls = val > 21 ? 'score-bust' : val === 21 ? 'score-21' : 'score-ok';
+    const isBust = pp.bjStatus === 'bust' || pp.bjBust;
+    const isWin = pp.bjResult === 'win' || pp.bjResult === 'blackjack';
+    const isPush = pp.bjResult === 'push';
+    const isActive = humanCanAct && pp.isHuman && pp.bjStatus === '';
+    const boxCls = [
+      pp.bjBust ? 'bust-box' : '',
+      isBust && !pp.bjBust ? 'bust-box' : '',
+      isWin ? 'winner-box' : '',
+      isActive ? 'active' : ''
+    ].filter(Boolean).join(' ');
 
-  // Players (bots + human)
-  const playersHTML = G.bjPlayers.map(pp=>{
-    const val = pp.hand.length>0 ? bjValue(pp.hand) : 0;
-    const scoreCls = val>21?'score-bust':val===21?'score-21':'score-ok';
-    const isActive = pp===activeHuman || (!pp.isHuman && pp.bjStatus==='');
-    const isBust = pp.bjStatus==='bust' || val>21;
-    const isWin = pp.bjResult==='win'||pp.bjResult==='blackjack';
-    const boxCls = isBust?'bust-box':isWin?'winner-box':isActive&&!pp.bust?'active':'';
-    const statusLabel = pp.bust?'💀 OUT':pp.bjStatus==='bust'?'BUST':pp.bjStatus==='stand'?'STAND':pp.bjResult==='win'?'WIN':pp.bjResult==='push'?'PUSH':pp.bjResult==='lose'?'LOSE':pp.bjResult==='blackjack'?'BLACKJACK':'';
+    let statusLabel = '';
+    if (pp.bjBust) statusLabel = '💀 OUT';
+    else if (pp.bjResult === 'blackjack') statusLabel = 'BLACKJACK';
+    else if (pp.bjResult === 'win') statusLabel = 'WIN';
+    else if (pp.bjResult === 'push') statusLabel = 'PUSH';
+    else if (pp.bjResult === 'lose') statusLabel = 'LOSE';
+    else if (pp.bjStatus === 'bust') statusLabel = 'BUST';
+    else if (pp.bjStatus === 'stand') statusLabel = 'STAND';
 
-    return `<div class="bj-player-box ${boxCls}${pp.bust?' bust-box':''}">
+    const statusCls = isWin ? 'status-win' : isBust ? 'status-lose' : isPush ? 'status-push' : '';
+
+    return `<div class="bj-player-box ${boxCls}">
       <div style="display:flex;align-items:center;gap:6px">
         <span>${pp.emoji}</span>
         <span class="bj-pname">${pp.name}</span>
-        ${pp.isHuman?`<span style="font-size:10px;color:rgba(201,168,76,0.5)">YOU</span>`:''}
+        ${pp.isHuman ? `<span style="font-size:10px;color:rgba(201,168,76,0.5)">YOU</span>` : ''}
       </div>
       <div class="bj-pbalance">$${pp.balance}</div>
-      ${pp.bjBet?`<div class="bj-pbet">Bet: $${pp.bjBet}</div>`:''}
-      <div class="bj-cards-row">${pp.hand.map(c=>cardHTML(c,true)).join('')}</div>
-      ${pp.hand.length>0?`<div class="bj-score ${scoreCls}">${val}</div>`:''}
-      ${statusLabel?`<div class="bj-status ${isWin?'status-win':isBust?'status-lose':pp.bjResult==='push'?'status-push':''}">${statusLabel}</div>`:''}
+      ${pp.bjBet ? `<div class="bj-pbet">Bet: $${pp.bjBet}</div>` : ''}
+      <div class="bj-cards-row">${pp.hand.map(c => cardHTML(c, true)).join('')}</div>
+      ${val > 0 ? `<div class="bj-score ${scoreCls}">${val}</div>` : ''}
+      ${statusLabel ? `<div class="bj-status ${statusCls}">${statusLabel}</div>` : ''}
     </div>`;
   }).join('');
 
   // Action area
   let actionHTML = '';
-  if (G.bjPhase==='betting') {
+  if (G.bjPhase === 'betting') {
     const maxBet = p.balance;
+    const defaultBet = Math.min(50, maxBet);
     actionHTML = `<div class="bj-action-area">
       <div class="bj-info">
         <div class="bj-player-label">😎 Place Your Bet</div>
         <div class="bj-balance-label">$${p.balance}</div>
       </div>
       <div class="bet-row">
-        <input class="bet-input" id="bj-bet-input" type="number" min="10" max="${maxBet}" step="10" value="${Math.min(50,maxBet)}">
+        <input class="bet-input" id="bj-bet-input" type="number" min="1" max="${maxBet}" step="5" value="${defaultBet}">
       </div>
       <div class="bj-buttons">
-        <button class="btn-quick" onclick="document.getElementById('bj-bet-input').value=Math.min(10,${maxBet})">$10</button>
-        <button class="btn-quick" onclick="document.getElementById('bj-bet-input').value=Math.min(25,${maxBet})">$25</button>
-        <button class="btn-quick" onclick="document.getElementById('bj-bet-input').value=Math.min(50,${maxBet})">$50</button>
-        <button class="btn-quick" onclick="document.getElementById('bj-bet-input').value=Math.min(100,${maxBet})">$100</button>
-        <button class="btn-quick" onclick="document.getElementById('bj-bet-input').value=${maxBet}">ALL IN</button>
-        <button class="btn-primary" style="font-size:16px;padding:10px 30px;" onclick="bjPlaceBet(parseInt(document.getElementById('bj-bet-input').value)||10)">DEAL ▶</button>
+        <button class="btn-quick" onclick="var el=document.getElementById('bj-bet-input');el.value=Math.min(10,${maxBet})">$10</button>
+        <button class="btn-quick" onclick="var el=document.getElementById('bj-bet-input');el.value=Math.min(25,${maxBet})">$25</button>
+        <button class="btn-quick" onclick="var el=document.getElementById('bj-bet-input');el.value=Math.min(50,${maxBet})">$50</button>
+        <button class="btn-quick" onclick="var el=document.getElementById('bj-bet-input');el.value=Math.min(100,${maxBet})">$100</button>
+        <button class="btn-quick" onclick="var el=document.getElementById('bj-bet-input');el.value=${maxBet}">ALL IN</button>
+        <button class="btn-primary" style="font-size:16px;padding:10px 30px;" onclick="bjPlaceBet(document.getElementById('bj-bet-input').value)">DEAL ▶</button>
       </div>
     </div>`;
-  } else if (G.bjPhase==='player_turns' && activeHuman) {
+  } else if (G.bjPhase === 'player_turns' && humanCanAct && p.bjStatus === '') {
     const val = bjValue(p.hand);
     const canDouble = p.balance >= p.bjBet;
     actionHTML = `<div class="bj-action-area">
       <div class="bj-info">
         <div class="bj-player-label">😎 Your turn — <span style="color:var(--gold)">${val}</span></div>
-        <div class="bj-balance-label">$${p.balance} | Bet: $${p.bjBet}</div>
+        <div class="bj-balance-label">$${p.balance} &nbsp;|&nbsp; Bet: $${p.bjBet}</div>
       </div>
       <div class="bj-buttons">
         <button class="btn-action btn-call" onclick="bjPlayerAction('hit')">HIT</button>
         <button class="btn-action btn-check" onclick="bjPlayerAction('stand')">STAND</button>
-        ${canDouble?`<button class="btn-action btn-raise" onclick="bjPlayerAction('double')">DOUBLE DOWN</button>`:''}
+        ${canDouble ? `<button class="btn-action btn-raise" onclick="bjPlayerAction('double')">DOUBLE DOWN</button>` : ''}
       </div>
     </div>`;
-  } else if (G.bjPhase==='dealer') {
+  } else if (G.bjPhase === 'player_turns') {
+    // Bots are playing
+    const curBot = G.bjTurnOrder && G.bjTurnIndex < G.bjTurnOrder.length ? G.bjTurnOrder[G.bjTurnIndex] : null;
+    const label = curBot ? `${curBot.name}'s turn...` : 'Waiting...';
+    actionHTML = `<div class="bj-action-area"><div style="font-family:'Bebas Neue';letter-spacing:3px;color:rgba(240,232,208,0.5)">${label}</div></div>`;
+  } else if (G.bjPhase === 'dealer') {
     actionHTML = `<div class="bj-action-area"><div style="font-family:'Bebas Neue';letter-spacing:3px;color:rgba(240,232,208,0.5)">DEALER'S TURN...</div></div>`;
   } else {
     actionHTML = `<div class="bj-action-area"><div style="font-family:'Bebas Neue';letter-spacing:3px;color:rgba(240,232,208,0.5)">RESOLVING...</div></div>`;
@@ -1511,12 +1590,12 @@ function renderBJ(activeHuman=null) {
     <div class="bj-table">
       <div class="bj-dealer-area">
         <div class="bj-section-label">DEALER</div>
-        <div class="bj-player-box dealer-box" style="max-width:400px">
+        <div class="bj-player-box dealer-box" style="max-width:420px">
           <div style="display:flex;align-items:center;gap:6px">
             <span>🏦</span><span class="bj-pname">Dealer</span>
           </div>
           <div class="bj-cards-row">${dealerCards}</div>
-          ${G.bjDealer.hand.length>0?`<div class="bj-score ${G.bjPhase!=='player_turns'?dealerScoreCls:'score-ok'}">${G.bjPhase==='player_turns'?'?':dealerVal}</div>`:''}
+          ${G.bjDealer.hand.length > 0 ? `<div class="bj-score ${!hideHole ? dealerScoreCls : 'score-ok'}">${dealerScoreDisplay}</div>` : ''}
         </div>
       </div>
       <div class="bj-player-areas">
