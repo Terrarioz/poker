@@ -1488,6 +1488,13 @@ function renderBJ(humanCanAct) {
   if (!areaEl || !G.bjDealer) return;
   const p = G.player;
 
+  // Determine if it's the human's turn directly from game state
+  const isHumanTurn = G.bjPhase === 'player_turns'
+    && G.bjTurnOrder
+    && G.bjTurnIndex < G.bjTurnOrder.length
+    && G.bjTurnOrder[G.bjTurnIndex] === p
+    && p.bjStatus === '';
+
   // Dealer cards — hide second card during player turns
   const dealerVal = bjValue(G.bjDealer.hand);
   const hideHole = G.bjPhase === 'player_turns';
@@ -1506,7 +1513,7 @@ function renderBJ(humanCanAct) {
     const isBust = pp.bjStatus === 'bust' || pp.bjBust;
     const isWin = pp.bjResult === 'win' || pp.bjResult === 'blackjack';
     const isPush = pp.bjResult === 'push';
-    const isActive = humanCanAct && pp.isHuman && pp.bjStatus === '';
+    const isActive = pp === p && isHumanTurn;
     const boxCls = [
       pp.bjBust ? 'bust-box' : '',
       isBust && !pp.bjBust ? 'bust-box' : '',
@@ -1561,7 +1568,7 @@ function renderBJ(humanCanAct) {
         <button class="btn-primary" style="font-size:16px;padding:10px 30px;" onclick="bjPlaceBet(document.getElementById('bj-bet-input').value)">DEAL ▶</button>
       </div>
     </div>`;
-  } else if (G.bjPhase === 'player_turns' && humanCanAct && p.bjStatus === '') {
+  } else if (isHumanTurn) {
     const val = bjValue(p.hand);
     const canDouble = p.balance >= p.bjBet;
     actionHTML = `<div class="bj-action-area">
