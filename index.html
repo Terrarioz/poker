@@ -186,10 +186,10 @@
     pointer-events: all;
     transition: all 0.3s;
   }
-  .bot-seat.seat-0 { top: 10px; left: 50%; transform: translateX(-50%); } /* top center */
-  .bot-seat.seat-1 { top: 50%; left: 10px; transform: translateY(-50%); } /* left */
-  .bot-seat.seat-2 { top: 50%; right: 10px; transform: translateY(-50%); } /* right */
-  .bot-seat.seat-3 { bottom: 10px; left: 20%; } /* bottom left */
+  .bot-seat.seat-0 { top: 10px; left: 50%; transform: translateX(-50%); }
+  .bot-seat.seat-1 { top: 50%; left: 10px; transform: translateY(-50%); }
+  .bot-seat.seat-2 { top: 50%; right: 10px; transform: translateY(-50%); }
+  .bot-seat.seat-3 { bottom: 10px; left: 20%; }
 
   .bot-avatar {
     width: 52px; height: 52px; border-radius: 50%;
@@ -408,6 +408,7 @@
     background: rgba(0,0,0,0.6); border: var(--border-gold); border-radius: 12px;
     padding: 16px 24px; margin-top: 12px;
     display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    z-index: 10;
   }
   .bj-info { flex: 1; }
   .bj-player-label { font-family: 'Playfair Display', serif; color: var(--gold); font-size: 18px; }
@@ -576,7 +577,6 @@ function cardBackHTML(small=false) {
 
 // ========== POKER HAND EVALUATOR ==========
 function handRank(cards) {
-  // returns {rank: 0-8, name, best5}
   if (cards.length < 5) return {rank:-1, name:'', best5:[]};
   const combos = choose5(cards);
   let best = null;
@@ -626,7 +626,6 @@ function flatGroups(groups) {
   return groups.flatMap(g=>Array(g.c).fill(g.r));
 }
 function isStraight(sorted) {
-  // Handle ace-low
   const s = [...new Set(sorted)];
   if (s.length<5) return false;
   if (s[0]-s[4]===4) return true;
@@ -720,14 +719,12 @@ function chipsHTML(amount) {
 // ============= TEXAS HOLD'EM ==============
 // ==========================================
 function startHoldemRound() {
-  // Remove bust players
   const alive = G.allPlayers.filter(p=>p.balance>0);
   if (alive.length < 2) { endGame(); return; }
 
-  // Reset per-round state
   G.deck = newDeck();
   G.community = [];
-  G.phase = 'preflop'; // preflop, flop, turn, river, showdown
+  G.phase = 'preflop'; 
   G.pot = 0;
   G.sidePots = [];
   G.currentBet = G.bigBlind;
@@ -735,13 +732,9 @@ function startHoldemRound() {
   G.lastRaise = G.bigBlind;
   G.dealerIdx = G.dealerIdx !== undefined ? (G.dealerIdx+1)%alive.length : 0;
 
-  // Reset players
   alive.forEach(p=>{ p.hand=[]; p.bet=0; p.folded=false; p.allIn=false; p.roundBet=0; p.acted=false; });
-
-  // Deal 2 cards each
   alive.forEach(p=>{ p.hand.push(G.deck.pop(), G.deck.pop()); });
 
-  // Blinds
   const sbIdx = (G.dealerIdx+1)%alive.length;
   const bbIdx = (G.dealerIdx+2)%alive.length;
   const sbPlayer = alive[sbIdx];
@@ -753,14 +746,11 @@ function startHoldemRound() {
   G.currentBet = bbAmt;
   G.lastAggressor = bbPlayer;
 
-  // Action starts after BB
   G.actionOrder = [];
   for (let i=1;i<alive.length;i++) G.actionOrder.push(alive[(bbIdx+i)%alive.length]);
-  G.actionOrder.push(...alive.slice(0,bbIdx+1).filter(p=>!G.actionOrder.includes(p))); // will be re-processed per phase
-  // Actually set action from UTG
+  G.actionOrder.push(...alive.slice(0,bbIdx+1).filter(p=>!G.actionOrder.includes(p))); 
   G.aliveOrder = alive;
   G.actionIdx = 0;
-  // Build preflop order starting from UTG (after BB)
   G.phaseOrder = [...alive];
   const startPos = (bbIdx+1)%alive.length;
   G.phaseOrder = [...alive.slice(startPos), ...alive.slice(0,startPos)];
@@ -789,13 +779,10 @@ function getActivePlayers() { return G.phaseOrder.filter(p=>!p.folded && !p.allI
 
 function nextHoldemAction() {
   const active = getActivePlayers();
-  // Check if round is over
   const stillIn = G.phaseOrder.filter(p=>!p.folded);
   if (stillIn.length===1) { awardPot(stillIn); startNextRound(); return; }
 
-  // Find next player to act
   if (G.actionIdx >= G.phaseOrder.length) {
-    // Check if betting is done
     advancePhase(); return;
   }
 
@@ -806,7 +793,6 @@ function nextHoldemAction() {
     nextHoldemAction(); return;
   }
 
-  // Check if all bets are settled
   const maxBet = Math.max(...G.phaseOrder.map(p=>p.bet));
   const needToAct = G.phaseOrder.filter(p=>!p.folded && !p.allIn && p.balance>0 && (p.bet<maxBet || !p.acted));
   if (needToAct.length===0) { advancePhase(); return; }
@@ -878,7 +864,6 @@ function playerAction(action) {
     G.currentBet = p.bet;
     G.lastRaise = actually - toCall;
     G.minRaise = G.lastRaise;
-    // Reset acted for others
     G.phaseOrder.forEach(pp=>{ if(pp!==p && !pp.folded && !pp.allIn) pp.acted=false; });
     G.actionIdx = 0;
     if (p.balance===0) p.allIn=true;
@@ -914,14 +899,11 @@ function botHoldemAction(p) {
   const maxBet = Math.max(...G.phaseOrder.map(pp=>pp.bet));
   const toCall = maxBet - p.bet;
   const pot = G.pot;
-
-  // Simple AI: evaluate hand strength
   const handStr = simpleHandStrength(p.hand, G.community);
   const rand = Math.random();
   let action;
 
   if (toCall===0) {
-    // Can check or bet
     if (handStr > 0.6 && rand < 0.6) {
       const betAmt = Math.min(Math.floor(pot * (0.3 + rand*0.4)), p.balance);
       if (betAmt > 0) {
@@ -935,7 +917,6 @@ function botHoldemAction(p) {
   } else {
     const callRatio = toCall / (pot + toCall);
     if (handStr > 0.75 && rand < 0.4) {
-      // Raise
       const raiseAmt = Math.min(toCall + Math.floor(pot*(0.5+rand*0.5)), p.balance);
       bet(p, raiseAmt);
       G.currentBet = p.bet;
@@ -944,19 +925,16 @@ function botHoldemAction(p) {
       if (p.balance===0) p.allIn=true;
       action='raise'; log(`${p.name} raises to $${p.bet}.`, 'log-action');
     } else if (handStr > callRatio + 0.1) {
-      // Call
       const amt = Math.min(toCall, p.balance);
       bet(p, amt);
       if (p.balance===0) p.allIn=true;
       action='call'; log(`${p.name} calls $${amt}.`, 'log-action');
     } else if (handStr > 0.15 && rand < 0.3) {
-      // Call anyway (bluff call)
       const amt = Math.min(toCall, p.balance);
       bet(p, amt);
       if (p.balance===0) p.allIn=true;
       action='call'; log(`${p.name} calls $${amt}.`, 'log-action');
     } else {
-      // Fold
       p.folded=true;
       action='fold'; log(`${p.name} folds.`, 'log-action');
     }
@@ -974,7 +952,6 @@ function simpleHandStrength(hand, community) {
   if (!hand || hand.length===0) return Math.random()*0.4;
   const all = [...hand, ...community];
   if (all.length < 5) {
-    // Pre-flop: pair, high cards
     const r1=RANK_VAL[hand[0].r], r2=RANK_VAL[hand[1].r];
     const paired = r1===r2;
     const high = Math.max(r1,r2);
@@ -994,12 +971,10 @@ function advancePhase() {
   G.phase = phaseMap[G.phase];
   if (!G.phase) { showdown(); return; }
 
-  // Reset bets for new phase
   G.phaseOrder.forEach(p=>{ p.bet=0; p.acted=false; });
   G.currentBet = 0;
   G.lastRaise = G.bigBlind;
 
-  // Deal community cards
   if (G.phase==='flop') { G.community.push(G.deck.pop(),G.deck.pop(),G.deck.pop()); log('--- Flop ---','log-info'); }
   else if (G.phase==='turn') { G.community.push(G.deck.pop()); log('--- Turn ---','log-info'); }
   else if (G.phase==='river') { G.community.push(G.deck.pop()); log('--- River ---','log-info'); }
@@ -1007,7 +982,6 @@ function advancePhase() {
 
   document.getElementById('phase-chip').textContent = G.phase.charAt(0).toUpperCase()+G.phase.slice(1);
 
-  // New action order: start from first active after dealer
   const alive = G.allPlayers.filter(p=>p.balance>0||p.allIn).filter(p=>!p.folded&&!p.bust);
   G.phaseOrder = alive;
   G.actionIdx = 0;
@@ -1037,7 +1011,6 @@ function showdown() {
   const share = Math.floor(G.pot / winners.length);
   winners.forEach(w=>{ w.p.balance += share; });
 
-  // Show hands
   evals.forEach(e=>{
     const tag = winners.includes(e) ? '🏆 WINS' : '';
     log(`${e.p.name}: ${e.ev.name} ${tag}`, winners.includes(e)?'log-win':'');
@@ -1055,7 +1028,6 @@ function awardPot(winners) {
 }
 
 function startNextRound() {
-  // Mark busted players
   G.allPlayers.forEach(p=>{ if(p.balance<=0 && !p.bust) { p.bust=true; p.balance=0; log(`${p.name} is eliminated!`,'log-lose'); } });
   const alive = G.allPlayers.filter(p=>!p.bust);
   if (alive.length<2) { endGame(); return; }
@@ -1063,7 +1035,6 @@ function startNextRound() {
   setTimeout(()=>startHoldemRound(), 2000);
 }
 
-// ========== HOLDEM RENDER ==========
 function renderHoldem(activePlayer=null) {
   document.getElementById('pot-display').textContent = '$'+G.pot;
 
@@ -1191,13 +1162,9 @@ function showHoldemShowdown(evals, winners) {
 // ============= BLACKJACK ==================
 // ==========================================
 
-// bjTurnIndex: index into G.bjTurnOrder (bots first, human last)
-// G.bjTurnOrder: array of players who need to act this round
-
 function startBlackjack() {
   G.bjPhase = 'betting';
   G.bjDealer = {name:'Dealer', hand:[], isDealer:true, emoji:'🏦'};
-  // Build player list, mark already-bust players
   G.bjPlayers = G.allPlayers.map(p=> {
     p.bjBust = p.balance <= 0;
     p.hand = [];
@@ -1224,7 +1191,6 @@ function bjStartRound() {
   G.deck = newDeck();
   G.bjDealer.hand = [];
 
-  // Reset each player for the new round
   G.bjPlayers.forEach(p => {
     p.bjBust = p.balance <= 0;
     p.hand = [];
@@ -1233,7 +1199,6 @@ function bjStartRound() {
     p.bjBet = 0;
   });
 
-  // Assign bets
   G.bjPlayers.forEach(p => {
     if (p.bjBust) return;
     if (p.isHuman) {
@@ -1244,7 +1209,6 @@ function bjStartRound() {
     }
   });
 
-  // Deal 2 cards to each active player, then 2 to dealer
   const active = G.bjPlayers.filter(p => !p.bjBust);
   active.forEach(p => p.hand.push(G.deck.pop()));
   G.bjDealer.hand.push(G.deck.pop());
@@ -1253,7 +1217,6 @@ function bjStartRound() {
 
   log(`--- Blackjack Round ${G.round} ---`, 'log-info');
 
-  // Turn order: bots first, human last
   G.bjTurnOrder = [
     ...G.bjPlayers.filter(p => !p.isHuman && !p.bjBust),
     ...G.bjPlayers.filter(p => p.isHuman && !p.bjBust)
@@ -1266,7 +1229,6 @@ function bjStartRound() {
 }
 
 function bjAdvanceTurn() {
-  // Skip players who have already acted
   while (G.bjTurnIndex < G.bjTurnOrder.length) {
     const cur = G.bjTurnOrder[G.bjTurnIndex];
     if (cur.bjStatus !== '') {
@@ -1277,7 +1239,6 @@ function bjAdvanceTurn() {
   }
 
   if (G.bjTurnIndex >= G.bjTurnOrder.length) {
-    // All players done — dealer's turn
     bjDealerTurn();
     return;
   }
@@ -1285,16 +1246,14 @@ function bjAdvanceTurn() {
   const cur = G.bjTurnOrder[G.bjTurnIndex];
 
   if (cur.isHuman) {
-    // Show human action buttons
-    renderBJ(true);
+    renderBJ();
   } else {
-    renderBJ(false);
+    renderBJ();
     setTimeout(() => bjBotTurn(cur), 700 + Math.random() * 400);
   }
 }
 
 function bjBotTurn(p) {
-  // Check p is still the current bot (safety)
   if (G.bjTurnOrder[G.bjTurnIndex] !== p) return;
   const val = bjValue(p.hand);
   if (val < 17 || (val === 17 && Math.random() < 0.25)) {
@@ -1304,26 +1263,27 @@ function bjBotTurn(p) {
     if (newVal > 21) {
       p.bjStatus = 'bust';
       log(`${p.name} busts!`, 'log-lose');
-      renderBJ(false);
+      renderBJ();
       G.bjTurnIndex++;
       setTimeout(() => bjAdvanceTurn(), 500);
     } else {
-      renderBJ(false);
+      renderBJ();
       setTimeout(() => bjBotTurn(p), 550);
     }
   } else {
     p.bjStatus = 'stand';
     log(`${p.name} stands at ${val}`, 'log-action');
-    renderBJ(false);
+    renderBJ();
     G.bjTurnIndex++;
     setTimeout(() => bjAdvanceTurn(), 500);
   }
 }
 
+// Fixed bjPlayerAction logic and globally exposed correctly
 function bjPlayerAction(action) {
   if (G.bjPhase !== 'player_turns') return;
   const p = G.player;
-  if (p.bjStatus !== '') return; // already acted
+  if (p.bjStatus !== '') return;
 
   if (action === 'hit') {
     p.hand.push(G.deck.pop());
@@ -1333,32 +1293,32 @@ function bjPlayerAction(action) {
       p.bjStatus = 'bust';
       log('You bust!', 'log-lose');
       G.bjTurnIndex++;
-      renderBJ(false);
+      renderBJ();
       setTimeout(() => bjAdvanceTurn(), 700);
     } else if (val === 21) {
       p.bjStatus = 'stand';
       G.bjTurnIndex++;
-      renderBJ(false);
+      renderBJ();
       setTimeout(() => bjAdvanceTurn(), 700);
     } else {
-      renderBJ(true); // still human's turn, show buttons again
+      renderBJ(); 
     }
   } else if (action === 'stand') {
     p.bjStatus = 'stand';
     log(`You stand at ${bjValue(p.hand)}`, 'log-action');
     G.bjTurnIndex++;
-    renderBJ(false);
+    renderBJ();
     setTimeout(() => bjAdvanceTurn(), 500);
   } else if (action === 'double') {
-    const extra = Math.min(p.bjBet, p.balance);
-    p.bjBet += extra;
+    const maxDoubleAmount = Math.min(p.bjBet, p.balance - p.bjBet); 
+    p.bjBet += maxDoubleAmount;
     p.hand.push(G.deck.pop());
     const val = bjValue(p.hand);
     log(`You double down → ${val} (total bet: $${p.bjBet})`, 'log-action');
     p.bjStatus = val > 21 ? 'bust' : 'stand';
     if (val > 21) log('You bust!', 'log-lose');
     G.bjTurnIndex++;
-    renderBJ(false);
+    renderBJ();
     setTimeout(() => bjAdvanceTurn(), 700);
   }
 }
@@ -1366,9 +1326,8 @@ function bjPlayerAction(action) {
 function bjDealerTurn() {
   G.bjPhase = 'dealer';
   log("--- Dealer's turn ---", 'log-info');
-  renderBJ(false);
+  renderBJ();
 
-  // Check if anyone (not bust) is still in
   const anyStanding = G.bjPlayers.some(p => !p.bjBust && p.bjStatus === 'stand');
 
   function dealerStep() {
@@ -1377,7 +1336,7 @@ function bjDealerTurn() {
       G.bjDealer.hand.push(G.deck.pop());
       const newVal = bjValue(G.bjDealer.hand);
       log(`Dealer hits → ${newVal}`, 'log-action');
-      renderBJ(false);
+      renderBJ();
       setTimeout(dealerStep, 750);
     } else {
       bjResolve();
@@ -1400,16 +1359,13 @@ function bjResolve() {
     const playerBust = p.bjStatus === 'bust';
 
     if (playerBust) {
-      // Lose the bet
       p.balance = Math.max(0, p.balance - p.bjBet);
       p.bjResult = 'lose';
       log(`${p.name} busted. -$${p.bjBet}`, 'log-lose');
     } else if (pBJ && dBJ) {
-      // Both blackjack — push (no money change)
       p.bjResult = 'push';
       log(`${p.name} push (both blackjack).`, 'log-action');
     } else if (pBJ) {
-      // Blackjack pays 3:2
       const win = Math.floor(p.bjBet * 1.5);
       p.balance += win;
       p.bjResult = 'blackjack';
@@ -1419,18 +1375,16 @@ function bjResolve() {
       p.bjResult = 'win';
       log(`${p.name} wins! +$${p.bjBet}`, 'log-win');
     } else if (pVal === dVal) {
-      // Push — no change
       p.bjResult = 'push';
       log(`${p.name} push.`, 'log-action');
     } else {
-      // Dealer wins
       p.balance = Math.max(0, p.balance - p.bjBet);
       p.bjResult = 'lose';
       log(`${p.name} loses. -$${p.bjBet}`, 'log-lose');
     }
   });
 
-  renderBJ(false);
+  renderBJ();
   setTimeout(() => showBJResult(), 900);
 }
 
@@ -1471,7 +1425,6 @@ function showBJResult() {
 
 function showBJBetting() {
   if (G.player.balance <= 0) { endGame(); return; }
-  // Reset all for new hand
   G.bjPlayers.forEach(p => {
     p.bjBust = p.balance <= 0;
     p.hand = [];
@@ -1483,19 +1436,17 @@ function showBJBetting() {
   renderBJ();
 }
 
-function renderBJ(humanCanAct) {
+function renderBJ() {
   const areaEl = document.getElementById('table-area');
   if (!areaEl || !G.bjDealer) return;
   const p = G.player;
 
-  // Determine if it's the human's turn directly from game state
   const isHumanTurn = G.bjPhase === 'player_turns'
     && G.bjTurnOrder
     && G.bjTurnIndex < G.bjTurnOrder.length
     && G.bjTurnOrder[G.bjTurnIndex] === p
     && p.bjStatus === '';
 
-  // Dealer cards — hide second card during player turns
   const dealerVal = bjValue(G.bjDealer.hand);
   const hideHole = G.bjPhase === 'player_turns';
   const dealerCards = G.bjDealer.hand.length > 0
@@ -1506,7 +1457,6 @@ function renderBJ(humanCanAct) {
   const dealerScoreCls = dealerVal > 21 ? 'score-bust' : dealerVal === 21 ? 'score-21' : 'score-ok';
   const dealerScoreDisplay = hideHole ? '?' : dealerVal;
 
-  // Player boxes
   const playersHTML = G.bjPlayers.map(pp => {
     const val = pp.hand.length > 0 ? bjValue(pp.hand) : 0;
     const scoreCls = val > 21 ? 'score-bust' : val === 21 ? 'score-21' : 'score-ok';
@@ -1546,7 +1496,6 @@ function renderBJ(humanCanAct) {
     </div>`;
   }).join('');
 
-  // Action area
   let actionHTML = '';
   if (G.bjPhase === 'betting') {
     const maxBet = p.balance;
@@ -1570,20 +1519,21 @@ function renderBJ(humanCanAct) {
     </div>`;
   } else if (isHumanTurn) {
     const val = bjValue(p.hand);
-    const canDouble = p.balance >= p.bjBet;
+    const canDouble = (p.balance - p.bjBet) > 0;
+    
+    // Explicitly inline onclick events to prevent any scope or context loss issues.
     actionHTML = `<div class="bj-action-area">
       <div class="bj-info">
         <div class="bj-player-label">😎 Your turn — <span style="color:var(--gold)">${val}</span></div>
         <div class="bj-balance-label">$${p.balance} &nbsp;|&nbsp; Bet: $${p.bjBet}</div>
       </div>
       <div class="bj-buttons">
-        <button class="btn-action btn-call" onclick="bjPlayerAction('hit')">HIT</button>
-        <button class="btn-action btn-check" onclick="bjPlayerAction('stand')">STAND</button>
-        ${canDouble ? `<button class="btn-action btn-raise" onclick="bjPlayerAction('double')">DOUBLE DOWN</button>` : ''}
+        <button type="button" class="btn-action btn-call" onclick="bjPlayerAction('hit')">HIT</button>
+        <button type="button" class="btn-action btn-check" onclick="bjPlayerAction('stand')">STAND</button>
+        ${canDouble ? `<button type="button" class="btn-action btn-raise" onclick="bjPlayerAction('double')">DOUBLE DOWN</button>` : ''}
       </div>
     </div>`;
   } else if (G.bjPhase === 'player_turns') {
-    // Bots are playing
     const curBot = G.bjTurnOrder && G.bjTurnIndex < G.bjTurnOrder.length ? G.bjTurnOrder[G.bjTurnIndex] : null;
     const label = curBot ? `${curBot.name}'s turn...` : 'Waiting...';
     actionHTML = `<div class="bj-action-area"><div style="font-family:'Bebas Neue';letter-spacing:3px;color:rgba(240,232,208,0.5)">${label}</div></div>`;
