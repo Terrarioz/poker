@@ -904,8 +904,11 @@ function botHoldemAction(p) {
   let action;
 
   if (toCall===0) {
-    if (handStr > 0.6 && rand < 0.6) {
-      const betAmt = Math.min(Math.floor(pot * (0.3 + rand*0.4)), p.balance);
+    // 没人下注时（可Check或Bet）
+    // 修改：只要牌力>0.4，或者有30%的概率纯诈唬，并且总概率80%会下注（变激进）
+    if ((handStr > 0.4 || rand < 0.3) && rand < 0.8) {
+      // 下注金额变得更随机，从1/3底池到一个满底池不等
+      const betAmt = Math.min(Math.floor(pot * (0.3 + Math.random()*0.7)), p.balance);
       if (betAmt > 0) {
         action='bet'; bet(p, betAmt);
         G.currentBet = p.bet;
@@ -915,26 +918,29 @@ function botHoldemAction(p) {
       } else { action='check'; log(`${p.name} checks.`, 'log-action'); }
     } else { action='check'; log(`${p.name} checks.`, 'log-action'); }
   } else {
+    // 面临下注时（可Fold, Call, Raise）
     const callRatio = toCall / (pot + toCall);
-    if (handStr > 0.75 && rand < 0.4) {
-      const raiseAmt = Math.min(toCall + Math.floor(pot*(0.5+rand*0.5)), p.balance);
+    
+    // 修改：牌力>0.6就有50%概率加注，或者有15%的概率无脑纯诈唬加注（偷鸡）
+    if ((handStr > 0.6 && rand < 0.5) || (rand < 0.15)) {
+      // 加注额度也变大，显得更凶
+      const raiseAmt = Math.min(toCall + Math.floor(pot*(0.5 + Math.random()*1.0)), p.balance);
       bet(p, raiseAmt);
       G.currentBet = p.bet;
       G.phaseOrder.forEach(pp=>{ if(pp!==p && !pp.folded && !pp.allIn) pp.acted=false; });
       G.actionIdx=0;
       if (p.balance===0) p.allIn=true;
       action='raise'; log(`${p.name} raises to $${p.bet}.`, 'log-action');
-    } else if (handStr > callRatio + 0.1) {
+      
+    // 修改：大幅降低跟注门槛，稍微有点牌就跟，或者有40%的概率闭着眼睛跟注（赌狗属性）
+    } else if (handStr > callRatio - 0.2 || rand < 0.4) {
       const amt = Math.min(toCall, p.balance);
       bet(p, amt);
       if (p.balance===0) p.allIn=true;
       action='call'; log(`${p.name} calls $${amt}.`, 'log-action');
-    } else if (handStr > 0.15 && rand < 0.3) {
-      const amt = Math.min(toCall, p.balance);
-      bet(p, amt);
-      if (p.balance===0) p.allIn=true;
-      action='call'; log(`${p.name} calls $${amt}.`, 'log-action');
+      
     } else {
+      // 只有在牌极差且随机数没摇到的情况下才会弃牌
       p.folded=true;
       action='fold'; log(`${p.name} folds.`, 'log-action');
     }
